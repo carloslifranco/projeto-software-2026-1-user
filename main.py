@@ -17,15 +17,6 @@ def create_app():
     
     db.init_app(app)
 
-@app.route("/users/<uuid:user_id>", methods=["GET"])
-def get_user(user_id):
-    user = User.query.get_or_404(user_id)
-
-    return jsonify({
-        "id": str(user.id),
-        "name": user.name,
-        "email": user.email
-    }), 201
 
     @app.route("/users", methods=["POST"])
     def create_user():

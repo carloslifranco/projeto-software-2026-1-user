@@ -87,5 +87,5 @@ python3 -m pytest
 
 
 ``` python
-python3 -m pytest --cov=main --cov-report=term-missing -s
+python3 -m pytest --cov=main --cov-report=html -s
 ```
