@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 from db import db
 from models import User
 import os
+import jwt
+from functools import wraps
 
 def create_app():
     app = Flask(__name__)
@@ -17,9 +19,56 @@ def create_app():
     
     db.init_app(app)
 
+    #fazendo o decorator para a autenticação do token
+    def validate_token(f):
+        @wraps(f)
+
+        def decorated(*args, **kwargs):
+            token = request.headers.get("Authorization") #aqui ele esperar bearer token, então o token deve ser enviado no formato "Bearer <token>"
+
+            if not token:
+                return jsonify({"message": "Token ausente!"}), 401
+
+            try:
+                token_puro = token.replace("Bearer ", "")
+                data = jwt.decode(token_puro, app.config['SECRET_KEY'], algorithms=["HS256"])
+                user_id_atual = data["user_id"]
+                
+            except Exception as e:
+                return jsonify({"message": "Token inválido ou expirado!"}), 401
+
+            return f(user_id_atual, *args, **kwargs)
+        
+        return decorated
+    
+    @app.route("/login", methods=["POST"])
+    def login():
+        data = request.json
+        email = data.get("email")
+
+        user = User.query.filter_by(email=email).first()
+
+        if user:
+
+            payload = {
+                "user_id": str(user.id),
+                "exp": jwt.datetime.datetime.utcnow() + jwt.timedelta(hours=1) #token expira em 1 hora
+            }
+
+            token = jwt.encode(payload, app.config['SECRET_KEY'], algorithm="HS256")
+            return jsonify({"token": token}), 200
+        
+        return jsonify({"message": "Credenciais inválidas"}), 401
+
 
     @app.route("/users", methods=["POST"])
-    def create_user():
+    @validate_token
+    def create_user(user_id_atual):
+        usuario_operador = User.query.get(user_id_atual)
+
+        if usuario_operador != 'admin':
+            return jsonify({"message": "Acesso negado: apenas administradores podem criar usuários."}), 403
+        
         data = request.json
 
         user = User(
@@ -33,11 +82,17 @@ def create_app():
         return jsonify({
             "id": str(user.id),
             "name": user.name,
-            "email": user.email
+            "email": user.email,
+            "criado_por": user_id_atual
         }), 201
 
     @app.route("/users/<uuid:user_id>", methods=["GET"])
-    def get_user(user_id):
+    @validate_token
+    def get_user(user_id_atual, user_id):
+
+        if str(user_id_atual) != str(user_id):
+            return jsonify({"message": "Acesso negado: você só pode acessar seus próprios dados."}), 403
+
         user = User.query.get_or_404(user_id)
 
         return jsonify({
@@ -47,7 +102,12 @@ def create_app():
         }), 200
 
     @app.route("/users/<uuid:user_id>", methods=["DELETE"])
-    def delete_user(user_id):
+    @validate_token
+    def delete_user(user_id_atual, user_id):
+
+        if str(user_id_atual) != str(user_id):
+            return jsonify({"message": "Acesso negado: você não tem acesso para deletar este usuário."}), 403
+
         user = User.query.get_or_404(user_id)
 
         db.session.delete(user)
@@ -56,7 +116,11 @@ def create_app():
         return "", 204
 
     @app.route("/users", methods=["GET"])
-    def list_users():
+    def list_users(user_id_atual):
+
+        if str(user_id_atual) != 'admin':
+            return jsonify({"message": "Acesso negado: apenas administradores podem listar usuários."}), 403
+
         users = User.query.all()
 
         return [
